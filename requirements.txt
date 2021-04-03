@@ -1,0 +1,4 @@
+flask
+jproperties
+spleeter
+boto3
