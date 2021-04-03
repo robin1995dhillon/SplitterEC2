@@ -5,6 +5,14 @@ import subprocess
 import boto3
 from flask import Flask, request, json
 from jproperties import Properties
+from celery import Celery
+
+app = Flask(__name__)
+app.secret_key = os.urandom(24)
+
+broker_url = 'amqp://vishal@localhost'          # Broker URL for RabbitMQ task queue
+celery = Celery(app.name, broker=broker_url)
+celery.config_from_object('celeryconfig')
 
 config = Properties()
 with open('aws.properties', 'rb') as read:
@@ -20,8 +28,22 @@ s3 = boto3.resource(service_name='s3',
                     aws_secret_access_key=aws_secret_access_key,
                     aws_session_token=aws_session_token)
 
-app = Flask(__name__)
-app.secret_key = os.urandom(24)
+@celery.task(bind=True)
+def process_file(bucket,key):
+    src_file = './src/' + key
+    s3.Bucket(bucket).download_file(key, src_file)
+
+    des_dir = './des/'
+
+    command = f'spleeter separate  -o {des_dir} {src_file}'
+    process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE)
+    process.wait()
+
+    output_path = './des/' + os.path.splitext(key)[0]
+    shutil.make_archive(output_path, 'zip', output_path)
+
+    upload_path = output_path + '.zip'
+    s3.Bucket(bucket).upload_file(upload_path, key + '.zip')
 
 @app.route('/', methods=['GET'])
 def getHome():
@@ -32,24 +54,7 @@ def postHome():
     bucket = request.form.get('bucket')
     key = request.form.get('key')
 
-    src_file = './src/'+key
-    des_dir = './des/'
-
-    print("download start")
-    s3.Bucket(bucket).download_file(key, src_file)
-    print("download done")
-
-    print("separation start")
-    command = f'spleeter separate  -o {des_dir} {src_file}'
-    process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE)
-    process.wait()
-    print("separation done")
-
-    output_path = './des/'+os.path.splitext(key)[0]
-    shutil.make_archive(output_path, 'zip', output_path)
-
-    upload_path = output_path + '.zip'
-    s3.Bucket(bucket).upload_file(upload_path, key+'.zip')
+    process_file.delay(bucket,key)
 
     data = {"bucket": bucket, "key": key+'.zip'}
 
