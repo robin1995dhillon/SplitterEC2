@@ -23,8 +23,12 @@ s3 = boto3.resource(service_name='s3',
 app = Flask(__name__)
 app.secret_key = os.urandom(24)
 
+@app.route('/', methods=['GET'])
+def getHome():
+    return "Server is up."
+
 @app.route('/', methods=['POST'])
-def home():
+def postHome():
     bucket = request.form.get('bucket')
     key = request.form.get('key')
 
