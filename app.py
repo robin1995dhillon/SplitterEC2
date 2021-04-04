@@ -3,14 +3,14 @@ import shutil
 import subprocess
 
 import boto3
+from celery import Celery
 from flask import Flask, request, json
 from jproperties import Properties
-from celery import Celery
 
 app = Flask(__name__)
 app.secret_key = os.urandom(24)
 
-broker_url = 'amqp://vishal@localhost'          # Broker URL for RabbitMQ task queue
+broker_url = 'amqp://guest@localhost'          # Broker URL for RabbitMQ task queue
 celery = Celery(app.name, broker=broker_url)
 celery.config_from_object('celeryconfig')
 
@@ -28,8 +28,23 @@ s3 = boto3.resource(service_name='s3',
                     aws_secret_access_key=aws_secret_access_key,
                     aws_session_token=aws_session_token)
 
+sns = boto3.client('sns',
+                   region_name='us-east-1',
+                   aws_access_key_id=aws_access_key_id,
+                   aws_secret_access_key=aws_secret_access_key,
+                   aws_session_token=aws_session_token)
+
+response = sns.list_topics()
+topics = response["Topics"]
+for arn in topics:
+    # print(arn['TopicArn'])
+    if 'dynamodb' not in arn['TopicArn']:
+        continue
+    else:
+        topic_arn = arn['TopicArn']
+
 @celery.task(bind=True)
-def process_file(bucket,key):
+def process_file(self, email, bucket, key):
     src_file = './src/' + key
     s3.Bucket(bucket).download_file(key, src_file)
 
@@ -45,16 +60,31 @@ def process_file(bucket,key):
     upload_path = output_path + '.zip'
     s3.Bucket(bucket).upload_file(upload_path, key + '.zip')
 
+    # Mail to user
+    sendEmail(email, bucket, key)
+
+@celery.task(bind=True)
+def sendEmail(self, email, bucket, key):
+    link = f'https://{bucket}.s3.amazonaws.com/{key}'
+    email = email
+    response_sns = sns.subscribe(TopicArn=topic_arn, Protocol="email", Endpoint=email)
+    subscription_arn = response_sns["SubscriptionArn"]
+    sns.publish(TopicArn=topic_arn,
+                Message=f"Hi, here is your link to download {link}",
+                Subject="Link to download")
+    return 'mail sent'
+
 @app.route('/', methods=['GET'])
 def getHome():
     return "Server is up."
 
 @app.route('/', methods=['POST'])
 def postHome():
+    email = request.form.get('email')
     bucket = request.form.get('bucket')
     key = request.form.get('key')
 
-    process_file.delay(bucket,key)
+    process_file.delay(email, bucket, key)
 
     data = {"bucket": bucket, "key": key+'.zip'}
 

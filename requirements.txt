@@ -3,3 +3,4 @@ flask
 jproperties
 spleeter
 boto3
+requests
