@@ -65,7 +65,7 @@ def process_file(self, email, bucket, key):
 
 @celery.task(bind=True)
 def sendEmail(self, email, bucket, key):
-    link = f'https://{bucket}.s3.amazonaws.com/{key}'
+    link = f'https://{bucket}.s3.amazonaws.com/{key}.zip'
     email = email
     response_sns = sns.subscribe(TopicArn=topic_arn, Protocol="email", Endpoint=email)
     subscription_arn = response_sns["SubscriptionArn"]
